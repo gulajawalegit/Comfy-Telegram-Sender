@@ -23,42 +23,54 @@ class TelegramSendVideo:
     OUTPUT_NODE = True
     CATEGORY = "Telegram"
 
-    def send_video(self, video_paths, prompt_text, bot_token, chat_id):
+    def send_video(self, video_path, prompt_text, bot_token, chat_id):
+    # Jika input adalah list, ambil elemen terakhir
+    if isinstance(video_path, list):
+        video_path = video_path[-1]
 
-        # Handle LIST output from Video Combine
-        if isinstance(video_paths, list):
-            video_path = video_paths[-1]
+    # Jika input adalah dict (biasa dari Video Combine), coba ambil key 'filename' atau 'path'
+    elif isinstance(video_path, dict):
+        # Coba cari key yang umum digunakan
+        if 'filename' in video_path:
+            video_path = video_path['filename']
+        elif 'path' in video_path:
+            video_path = video_path['path']
         else:
-            video_path = video_paths
+            # Jika tidak ada, coba konversi ke string
+            video_path = str(video_path)
 
-        if not os.path.exists(video_path):
-            raise FileNotFoundError(f"Video not found: {video_path}")
+    # Pastikan video_path adalah string
+    if not isinstance(video_path, str):
+        raise TypeError(f"Expected string or list/dict with path, got {type(video_path)}")
 
-        caption = (
-            "🎬 Video Generated Successfully\n\n"
-            "📝 Prompt Used:\n"
-            f"{prompt_text[:900]}"
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video not found: {video_path}")
+
+    caption = (
+        "🎬 Video Generated Successfully\n\n"
+        "📝 Prompt Used:\n"
+        f"{prompt_text[:900]}"
+    )
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+
+    with open(video_path, "rb") as video_file:
+        response = requests.post(
+            url,
+            data={
+                "chat_id": chat_id,
+                "caption": caption
+            },
+            files={
+                "video": video_file
+            },
+            timeout=120
         )
 
-        url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Telegram API Error {response.status_code}: {response.text}"
+        )
 
-        with open(video_path, "rb") as video_file:
-            response = requests.post(
-                url,
-                data={
-                    "chat_id": chat_id,
-                    "caption": caption
-                },
-                files={
-                    "video": video_file
-                },
-                timeout=120
-            )
-
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Telegram Error {response.status_code}: {response.text}"
-            )
-
-        print(f"✅ Video sent to Telegram: {video_path}")
-        return ()
+    print(f"✅ Video sent to Telegram: {video_path}")
+    return {}
