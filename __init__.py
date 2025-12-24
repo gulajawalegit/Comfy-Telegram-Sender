@@ -1,9 +1,5 @@
-from .telegram_sender import TelegramSendVideo
+from .render_time import NODE_CLASS_MAPPINGS as RT_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as RT_NAMES
+from .telegram_sender import NODE_CLASS_MAPPINGS as TG_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as TG_NAMES
 
-NODE_CLASS_MAPPINGS = {
-    "TelegramSendVideo": TelegramSendVideo
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "TelegramSendVideo": "Send Video to Telegram (With Prompt)"
-}
+NODE_CLASS_MAPPINGS = {**RT_MAPPINGS, **TG_MAPPINGS}
+NODE_DISPLAY_NAME_MAPPINGS = {**RT_NAMES, **TG_NAMES}
