@@ -1,12 +1,12 @@
 import requests
 import os
 
-class TelegramSendVideo:
+class TelegramSendMedia:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "video_paths": ("VHS_FILENAMES",),  # Output dari VideoHelperSuite
+                "media_paths": ("VHS_FILENAMES",),  # Bisa video atau image
                 "prompt_text": ("STRING", {
                     "multiline": True,
                     "default": ""
@@ -28,9 +28,11 @@ class TelegramSendVideo:
         }
 
     RETURN_TYPES = ()
-    FUNCTION = "send_video"
+    FUNCTION = "send_media"
     OUTPUT_NODE = True
     CATEGORY = "utils/telegram"
+
+    # -------------------------
 
     def format_render_time(self, seconds):
         if seconds <= 0:
@@ -38,67 +40,77 @@ class TelegramSendVideo:
         total_sec = int(seconds)
         mins, secs = divmod(total_sec, 60)
         if mins > 0:
-            time_str = f"{mins} menit {secs} detik"
-        else:
-            time_str = f"{secs} detik"
-        return f"⏱️ Waktu Render: {time_str}"
+            return f"⏱️ Waktu Render: {mins} menit {secs} detik"
+        return f"⏱️ Waktu Render: {secs} detik"
 
-    def send_video(self, video_paths, prompt_text, bot_token, chat_id, render_time_seconds=0.0):
-        # Validasi token dan chat_id
+    # -------------------------
+
+    def send_media(self, media_paths, prompt_text, bot_token, chat_id, render_time_seconds=0.0):
         if not bot_token or not chat_id:
             raise ValueError("❌ bot_token dan chat_id wajib diisi!")
 
-        # Ekstrak daftar file dari format VHS_FILENAMES: (should_preview, [file1, file2, ...])
-        if isinstance(video_paths, tuple) and len(video_paths) == 2:
-            _, file_list = video_paths
-        elif isinstance(video_paths, list):
-            file_list = video_paths
-        elif isinstance(video_paths, str):
-            file_list = [video_paths]
+        # Extract file list dari VHS_FILENAMES
+        if isinstance(media_paths, tuple) and len(media_paths) == 2:
+            _, file_list = media_paths
+        elif isinstance(media_paths, list):
+            file_list = media_paths
+        elif isinstance(media_paths, str):
+            file_list = [media_paths]
         else:
-            raise TypeError(f"Unsupported input type for video_paths: {type(video_paths)}")
+            raise TypeError(f"Unsupported input type: {type(media_paths)}")
 
         if not file_list:
-            raise FileNotFoundError("❌ Tidak ada file video yang diberikan.")
+            raise FileNotFoundError("❌ Tidak ada file media.")
 
-        # Prioritaskan ekstensi video (urut dari akhir, karena VHS sering simpan .mp4 terakhir)
-        VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.avi', '.mkv'}
-        video_path = None
+        VIDEO_EXT = {".mp4", ".webm", ".mov", ".avi", ".mkv"}
+        IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+
+        media_path = None
+        media_type = None
+
+        # Prioritaskan file terakhir (umumnya output final ComfyUI)
         for path in reversed(file_list):
-            if os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS:
-                video_path = path
+            ext = os.path.splitext(path)[1].lower()
+            if ext in VIDEO_EXT:
+                media_path = path
+                media_type = "video"
+                break
+            if ext in IMAGE_EXT:
+                media_path = path
+                media_type = "image"
                 break
 
-        # Fallback: gunakan file terakhir jika tidak ada ekstensi dikenal
-        if video_path is None:
-            video_path = file_list[-1]
+        if media_path is None:
+            raise ValueError("❌ Tidak ditemukan file video atau image yang didukung.")
 
-        if not isinstance(video_path, str):
-            raise TypeError(f"Expected string path, got: {type(video_path)}")
+        if not os.path.exists(media_path):
+            raise FileNotFoundError(f"❌ File tidak ditemukan: {media_path}")
 
-        if not os.path.exists(video_path):
-            raise FileNotFoundError(f"❌ File video tidak ditemukan: {video_path}")
+        # Telegram bot limit ±50MB
+        size_mb = os.path.getsize(media_path) / (1024 * 1024)
+        if size_mb > 50:
+            raise ValueError(f"❌ File terlalu besar: {size_mb:.1f} MB (Limit 50 MB)")
 
-        # Periksa ukuran file (batas Telegram: 50 MB untuk bot biasa)
-        file_size = os.path.getsize(video_path)
-        if file_size > 50 * 1024 * 1024:
-            raise ValueError(f"❌ File terlalu besar ({file_size / (1024*1024):.1f} MB). Batas Telegram: 50 MB.")
-
-        # Format caption
+        # Caption
         time_info = self.format_render_time(render_time_seconds)
         caption = (
-            "🎬 Video Generated Successfully\n\n"
+            "🎬 Media Generated Successfully\n\n"
             f"{time_info}\n\n"
             "📝 Prompt Used:\n"
             f"{prompt_text[:900]}"
         )
 
-        # ✅ URL Telegram yang BENAR — TANPA SPASI!
-        url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+        # Endpoint & payload
+        if media_type == "video":
+            url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+            files_key = "video"
+        else:
+            url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+            files_key = "photo"
 
         # Kirim ke Telegram
         try:
-            with open(video_path, "rb") as video_file:
+            with open(media_path, "rb") as media_file:
                 response = requests.post(
                     url,
                     data={
@@ -106,17 +118,17 @@ class TelegramSendVideo:
                         "caption": caption,
                     },
                     files={
-                        "video": video_file
+                        files_key: media_file
                     },
                     timeout=120
                 )
         except Exception as e:
-            raise RuntimeError(f"❌ Gagal mengirim ke Telegram: {str(e)}")
+            raise RuntimeError(f"❌ Gagal mengirim media: {str(e)}")
 
         if response.status_code != 200:
             raise RuntimeError(
                 f"❌ Telegram API Error {response.status_code}: {response.text}"
             )
 
-        print(f"✅ Video berhasil dikirim ke Telegram! ({os.path.basename(video_path)})")
+        print(f"✅ {media_type.upper()} berhasil dikirim: {os.path.basename(media_path)}")
         return {}
