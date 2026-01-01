@@ -1,134 +1,127 @@
 import requests
 import os
 
-class TelegramSendMedia:
+# ================= IMAGE =================
+class TelegramSendImage:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "media_paths": ("VHS_FILENAMES",),  # Bisa video atau image
-                "prompt_text": ("STRING", {
-                    "multiline": True,
-                    "default": ""
-                }),
-                "bot_token": ("STRING", {
-                    "default": ""
-                }),
-                "chat_id": ("STRING", {
-                    "default": ""
-                }),
+                "image_path": ("STRING",),
+                "prompt_text": ("STRING", {"multiline": True, "default": ""}),
+                "bot_token": ("STRING", {"default": ""}),
+                "chat_id": ("STRING", {"default": ""}),
             },
             "optional": {
                 "render_time_seconds": ("FLOAT", {
-                    "default": 0.0,
-                    "min": 0.0,
-                    "step": 0.1
+                    "default": 0.0, "min": 0.0, "step": 0.1
                 }),
             }
         }
 
     RETURN_TYPES = ()
-    FUNCTION = "send_media"
+    FUNCTION = "send_image"
     OUTPUT_NODE = True
     CATEGORY = "utils/telegram"
 
-    # -------------------------
+    def format_render_time(self, seconds):
+        if seconds <= 0:
+            return "⏱️ Render time not available"
+        mins, secs = divmod(int(seconds), 60)
+        return f"⏱️ Render Time: {mins}m {secs}s" if mins else f"⏱️ Render Time: {secs}s"
+
+    def send_image(self, image_path, prompt_text, bot_token, chat_id, render_time_seconds=0.0):
+        if not bot_token or not chat_id:
+            raise ValueError("bot_token & chat_id required")
+
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(image_path)
+
+        if os.path.getsize(image_path) > 50 * 1024 * 1024:
+            raise ValueError("Image > 50MB")
+
+        caption = (
+            "🖼️ Image Generated\n\n"
+            f"{self.format_render_time(render_time_seconds)}\n\n"
+            f"📝 Prompt:\n{prompt_text[:900]}"
+        )
+
+        url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+
+        with open(image_path, "rb") as f:
+            r = requests.post(
+                url,
+                data={"chat_id": chat_id, "caption": caption},
+                files={"photo": f},
+                timeout=120
+            )
+
+        if r.status_code != 200:
+            raise RuntimeError(r.text)
+
+        print(f"✅ Image sent: {os.path.basename(image_path)}")
+        return {}
+
+# ================= VIDEO =================
+class TelegramSendVideo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video_paths": ("VHS_FILENAMES",),
+                "prompt_text": ("STRING", {"multiline": True, "default": ""}),
+                "bot_token": ("STRING", {"default": ""}),
+                "chat_id": ("STRING", {"default": ""}),
+            },
+            "optional": {
+                "render_time_seconds": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "step": 0.1
+                }),
+            }
+        }
+
+    RETURN_TYPES = ()
+    FUNCTION = "send_video"
+    OUTPUT_NODE = True
+    CATEGORY = "utils/telegram"
 
     def format_render_time(self, seconds):
         if seconds <= 0:
-            return "⏱️ Waktu render tidak tersedia"
-        total_sec = int(seconds)
-        mins, secs = divmod(total_sec, 60)
-        if mins > 0:
-            return f"⏱️ Waktu Render: {mins} menit {secs} detik"
-        return f"⏱️ Waktu Render: {secs} detik"
+            return "⏱️ Render time not available"
+        mins, secs = divmod(int(seconds), 60)
+        return f"⏱️ Render Time: {mins}m {secs}s" if mins else f"⏱️ Render Time: {secs}s"
 
-    # -------------------------
-
-    def send_media(self, media_paths, prompt_text, bot_token, chat_id, render_time_seconds=0.0):
-        if not bot_token or not chat_id:
-            raise ValueError("❌ bot_token dan chat_id wajib diisi!")
-
-        # Extract file list dari VHS_FILENAMES
-        if isinstance(media_paths, tuple) and len(media_paths) == 2:
-            _, file_list = media_paths
-        elif isinstance(media_paths, list):
-            file_list = media_paths
-        elif isinstance(media_paths, str):
-            file_list = [media_paths]
+    def send_video(self, video_paths, prompt_text, bot_token, chat_id, render_time_seconds=0.0):
+        if isinstance(video_paths, tuple):
+            _, files = video_paths
         else:
-            raise TypeError(f"Unsupported input type: {type(media_paths)}")
+            files = video_paths if isinstance(video_paths, list) else [video_paths]
 
-        if not file_list:
-            raise FileNotFoundError("❌ Tidak ada file media.")
+        video_path = files[-1]
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(video_path)
 
-        VIDEO_EXT = {".mp4", ".webm", ".mov", ".avi", ".mkv"}
-        IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+        if os.path.getsize(video_path) > 50 * 1024 * 1024:
+            raise ValueError("Video > 50MB")
 
-        media_path = None
-        media_type = None
-
-        # Prioritaskan file terakhir (umumnya output final ComfyUI)
-        for path in reversed(file_list):
-            ext = os.path.splitext(path)[1].lower()
-            if ext in VIDEO_EXT:
-                media_path = path
-                media_type = "video"
-                break
-            if ext in IMAGE_EXT:
-                media_path = path
-                media_type = "image"
-                break
-
-        if media_path is None:
-            raise ValueError("❌ Tidak ditemukan file video atau image yang didukung.")
-
-        if not os.path.exists(media_path):
-            raise FileNotFoundError(f"❌ File tidak ditemukan: {media_path}")
-
-        # Telegram bot limit ±50MB
-        size_mb = os.path.getsize(media_path) / (1024 * 1024)
-        if size_mb > 50:
-            raise ValueError(f"❌ File terlalu besar: {size_mb:.1f} MB (Limit 50 MB)")
-
-        # Caption
-        time_info = self.format_render_time(render_time_seconds)
         caption = (
-            "🎬 Media Generated Successfully\n\n"
-            f"{time_info}\n\n"
-            "📝 Prompt Used:\n"
-            f"{prompt_text[:900]}"
+            "🎬 Video Generated\n\n"
+            f"{self.format_render_time(render_time_seconds)}\n\n"
+            f"📝 Prompt:\n{prompt_text[:900]}"
         )
 
-        # Endpoint & payload
-        if media_type == "video":
-            url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
-            files_key = "video"
-        else:
-            url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
-            files_key = "photo"
+        url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
 
-        # Kirim ke Telegram
-        try:
-            with open(media_path, "rb") as media_file:
-                response = requests.post(
-                    url,
-                    data={
-                        "chat_id": chat_id,
-                        "caption": caption,
-                    },
-                    files={
-                        files_key: media_file
-                    },
-                    timeout=120
-                )
-        except Exception as e:
-            raise RuntimeError(f"❌ Gagal mengirim media: {str(e)}")
-
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"❌ Telegram API Error {response.status_code}: {response.text}"
+        with open(video_path, "rb") as f:
+            r = requests.post(
+                url,
+                data={"chat_id": chat_id, "caption": caption},
+                files={"video": f},
+                timeout=120
             )
 
-        print(f"✅ {media_type.upper()} berhasil dikirim: {os.path.basename(media_path)}")
+        if r.status_code != 200:
+            raise RuntimeError(r.text)
+
+        print(f"✅ Video sent: {os.path.basename(video_path)}")
         return {}
