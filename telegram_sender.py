@@ -1,8 +1,112 @@
-import requests
 import os
+import sys
+import requests
+import subprocess
+import shutil
+import tempfile
 
+# ===================== SIZE LIMIT =====================
 PHOTO_LIMIT = 10 * 1024 * 1024      # 10 MB
-BOT_LIMIT = 50 * 1024 * 1024        # 50 MB
+BOT_LIMIT   = 50 * 1024 * 1024      # 50 MB
+
+
+# ===================== LIBRARY CHECK =====================
+def ensure_pillow():
+    try:
+        from PIL import Image
+        return True
+    except ImportError:
+        print("📦 Pillow not found, installing...")
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "pillow"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            from PIL import Image
+            print("✅ Pillow installed")
+            return True
+        except Exception as e:
+            print(f"❌ Pillow install failed: {e}")
+            return False
+
+
+def ensure_oxipng():
+    if shutil.which("oxipng") is None:
+        print("⚠️ oxipng not found, fallback to Pillow")
+        return False
+    return True
+
+
+# ===================== PNG OPTIMIZER =====================
+def optimize_png_auto(input_path, oxipng_level=6, min_size_mb=1.0):
+    if not input_path.lower().endswith(".png"):
+        return input_path
+
+    try:
+        original_size = os.path.getsize(input_path)
+        if original_size < min_size_mb * 1024 * 1024:
+            return input_path
+
+        best_path = input_path
+        best_size = original_size
+        tmp_dir = tempfile.gettempdir()
+
+        # ---------- OXIPNG ----------
+        if ensure_oxipng():
+            oxi_path = os.path.join(
+                tmp_dir, f"oxipng_{os.path.basename(input_path)}"
+            )
+            try:
+                subprocess.run(
+                    [
+                        "oxipng",
+                        "-o", str(oxipng_level),
+                        "--strip", "all",
+                        "--quiet",
+                        input_path,
+                        "-o", oxi_path
+                    ],
+                    check=True
+                )
+                oxi_size = os.path.getsize(oxi_path)
+                if oxi_size < best_size:
+                    best_path, best_size = oxi_path, oxi_size
+            except Exception as e:
+                print(f"⚠️ oxipng error: {e}")
+
+        # ---------- PILLOW FALLBACK ----------
+        if ensure_pillow():
+            try:
+                from PIL import Image
+                pil_path = os.path.join(
+                    tmp_dir, f"pillow_{os.path.basename(input_path)}"
+                )
+                with Image.open(input_path) as img:
+                    img.save(
+                        pil_path,
+                        format="PNG",
+                        optimize=True,
+                        compress_level=9
+                    )
+                pil_size = os.path.getsize(pil_path)
+                if pil_size < best_size:
+                    best_path, best_size = pil_path, pil_size
+            except Exception as e:
+                print(f"⚠️ Pillow error: {e}")
+
+        if best_path != input_path:
+            print(
+                f"🧠 PNG optimized: "
+                f"{original_size/1024/1024:.2f}MB → "
+                f"{best_size/1024/1024:.2f}MB"
+            )
+
+        return best_path
+
+    except Exception as e:
+        print(f"⚠️ PNG optimization skipped: {e}")
+        return input_path
 
 
 # ===================== UTIL =====================
@@ -65,6 +169,7 @@ class TelegramSendImage:
 
     def send_image(self, image_path, prompt_text, bot_token, chat_id, render_time_seconds=0.0):
         image_path = normalize_path(image_path)
+        image_path = optimize_png_auto(image_path)
 
         if not os.path.exists(image_path):
             raise FileNotFoundError(image_path)
@@ -78,7 +183,6 @@ class TelegramSendImage:
             f"{prompt_text[:900]}"
         )
 
-        # =====<= 10MB : PHOTO =====
         if size <= PHOTO_LIMIT:
             url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
             with open(image_path, "rb") as f:
@@ -88,18 +192,19 @@ class TelegramSendImage:
                     files={"photo": f},
                     timeout=120
                 )
-
-        # =====> 10MB : DOCUMENT =====
         elif size <= BOT_LIMIT:
             r = send_document(bot_token, chat_id, image_path, caption)
-
         else:
             raise ValueError(f"❌ Image > 50MB ({size / 1024 / 1024:.1f} MB)")
 
         if r.status_code != 200:
             raise RuntimeError(f"❌ Telegram API Error: {r.text}")
 
-        print(f"✅ Image terkirim ({'PHOTO' if size <= PHOTO_LIMIT else 'DOCUMENT'}): {os.path.basename(image_path)}")
+        print(
+            f"✅ Image terkirim sebagai "
+            f"{'PHOTO' if size <= PHOTO_LIMIT else 'DOCUMENT'}: "
+            f"{os.path.basename(image_path)}"
+        )
         return {}
 
 
@@ -148,7 +253,6 @@ class TelegramSendVideo:
             f"{prompt_text[:900]}"
         )
 
-        # =====<= 50MB : VIDEO =====
         if size <= BOT_LIMIT:
             url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
             with open(video_path, "rb") as f:
@@ -158,8 +262,6 @@ class TelegramSendVideo:
                     files={"video": f},
                     timeout=300
                 )
-
-        # =====> 50MB : DOCUMENT =====
         else:
             r = send_document(bot_token, chat_id, video_path, caption)
 
