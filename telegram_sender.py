@@ -171,7 +171,7 @@ class TelegramSendVideo:
             f"{prompt_text[:900]}"
         )
 
-        url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+        url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
 
         with open(video_path, "rb") as video_file:
             response = requests.post(
@@ -181,7 +181,7 @@ class TelegramSendVideo:
                     "caption": caption
                 },
                 files={
-                    "video": video_file
+                    "document": video_file
                 },
                 timeout=120
             )
